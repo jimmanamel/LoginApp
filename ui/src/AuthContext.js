@@ -5,6 +5,7 @@ import React, {
   useState,
   useRef,
 } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "./api"; // used for token refresh
 
 const AuthContext = createContext();
@@ -15,6 +16,8 @@ export const AuthProvider = ({ children }) => {
   );
   const [showModal, setShowModal] = useState(false);
   const [countdown, setCountdown] = useState(15);
+
+  const navigate = useNavigate();
 
   const modalTimer = useRef(null);
   const logoutTimer = useRef(null);
@@ -42,17 +45,17 @@ export const AuthProvider = ({ children }) => {
 
   const startTokenTimers = (exp) => {
     clearTimers();
-  
+
     try {
       const now = Date.now() / 1000;
       const secondsUntilExpiry = exp - now;
-  
+
       if (secondsUntilExpiry <= 15) {
         // If expiry is too close, logout directly
         logout();
         return;
       }
-  
+
       // Show modal 15 seconds before expiry
       modalTimer.current = setTimeout(() => {
         setShowModal(true);
@@ -67,18 +70,17 @@ export const AuthProvider = ({ children }) => {
           }
         }, 1000);
       }, (secondsUntilExpiry - 15) * 1000);
-  
+
       // Auto logout
       logoutTimer.current = setTimeout(() => {
+        navigate("/");
         logout();
       }, secondsUntilExpiry * 1000);
-  
     } catch (err) {
       console.error("Invalid token expiration time");
       logout();
     }
   };
-  
 
   // Refresh token (simulate)
   const refreshToken = async () => {
@@ -98,7 +100,7 @@ export const AuthProvider = ({ children }) => {
       startTokenTimers(expiryTime);
     }
     return clearTimers;
-  }, [expiryTime]);
+  }, [expiryTime, startTokenTimers]);
 
   return (
     <AuthContext.Provider
@@ -109,6 +111,7 @@ export const AuthProvider = ({ children }) => {
         showModal,
         setShowModal,
         countdown,
+        expiryTime,
       }}
     >
       {children}
