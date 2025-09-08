@@ -4,14 +4,15 @@ import React, {
   useEffect,
   useState,
   useRef,
+  useCallback,
 } from "react";
 import { useNavigate } from "react-router-dom";
-import api from "./api"; // used for token refresh
+import api from "./api"; // for token refresh
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [expiryTime, setExpiryTime] = useState(
+  const [expiryTime, setExpiryTime] = useState(() =>
     sessionStorage.getItem("exp-time")
   );
   const [showModal, setShowModal] = useState(false);
@@ -19,85 +20,87 @@ export const AuthProvider = ({ children }) => {
 
   const navigate = useNavigate();
 
-  const modalTimer = useRef(null);
-  const logoutTimer = useRef(null);
-  const countdownTimer = useRef(null);
+  const modalTimerRef = useRef(null);
+  const logoutTimerRef = useRef(null);
+  const countdownTimerRef = useRef(null);
 
-  const login = (loginResponse) => {
-    const expiryTime = loginResponse.exp;
-    sessionStorage.setItem("exp-time", expiryTime);
-    setExpiryTime(expiryTime);
-    startTokenTimers(expiryTime);
+  const clearTimers = () => {
+    clearTimeout(modalTimerRef.current);
+    clearTimeout(logoutTimerRef.current);
+    clearInterval(countdownTimerRef.current);
   };
 
-  const logout = () => {
+  const startCountdown = () => {
+    let timeLeft = 15;
+    setCountdown(timeLeft);
+    clearInterval(countdownTimerRef.current);
+    countdownTimerRef.current = setInterval(() => {
+      timeLeft -= 1;
+      setCountdown(timeLeft);
+      if (timeLeft <= 0) {
+        clearInterval(countdownTimerRef.current);
+      }
+    }, 1000);
+  };
+
+  const logout = useCallback(() => {
     clearTimers();
     sessionStorage.removeItem("exp-time");
     setExpiryTime(null);
     setShowModal(false);
-  };
+    navigate("/");
+  }, [navigate]);
 
-  const clearTimers = () => {
-    clearTimeout(modalTimer.current);
-    clearTimeout(logoutTimer.current);
-    clearInterval(countdownTimer.current);
-  };
+  const startTokenTimers = useCallback(
+    (exp) => {
+      clearTimers();
 
-  const startTokenTimers = (exp) => {
-    clearTimers();
-
-    try {
       const now = Date.now() / 1000;
       const secondsUntilExpiry = exp - now;
 
       if (secondsUntilExpiry <= 15) {
-        // If expiry is too close, logout directly
         logout();
         return;
       }
 
-      // Show modal 15 seconds before expiry
-      modalTimer.current = setTimeout(() => {
+      // Show modal 15s before token expires
+      modalTimerRef.current = setTimeout(() => {
         setShowModal(true);
-        let timeLeft = 15;
-        setCountdown(timeLeft);
-        clearInterval(countdownTimer.current); // 🛠️ clear existing interval if any
-        countdownTimer.current = setInterval(() => {
-          timeLeft -= 1;
-          setCountdown(timeLeft);
-          if (timeLeft <= 0) {
-            clearInterval(countdownTimer.current);
-          }
-        }, 1000);
+        startCountdown();
       }, (secondsUntilExpiry - 15) * 1000);
 
-      // Auto logout
-      logoutTimer.current = setTimeout(() => {
-        navigate("/");
-        logout();
-      }, secondsUntilExpiry * 1000);
-    } catch (err) {
-      console.error("Invalid token expiration time");
-      logout();
-    }
-  };
+      // Auto logout on expiry
+      logoutTimerRef.current = setTimeout(logout, secondsUntilExpiry * 1000);
+    },
+    [logout]
+  );
 
-  // Refresh token (simulate)
-  const refreshToken = async () => {
+  const login = useCallback(
+    (loginResponse) => {
+      const exp = loginResponse.exp;
+      sessionStorage.setItem("exp-time", exp);
+      setExpiryTime(exp);
+      startTokenTimers(exp);
+    },
+    [startTokenTimers]
+  );
+
+  const refreshToken = useCallback(async () => {
     try {
       const response = await api.post("/refresh");
-      const exp = response.data;
-      login(exp); // resets timers
+      const exp = response.data?.exp;
+      if (!exp) throw new Error("No expiry in refresh response");
+      login({ exp });
       setShowModal(false);
     } catch (err) {
-      console.error("Token refresh failed");
+      console.error("Token refresh failed", err);
       logout();
     }
-  };
+  }, [login, logout]);
 
   useEffect(() => {
     if (expiryTime) {
-      startTokenTimers(expiryTime);
+      startTokenTimers(Number(expiryTime));
     }
     return clearTimers;
   }, [expiryTime, startTokenTimers]);
